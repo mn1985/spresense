@@ -1,0 +1,104 @@
+import serial
+import struct
+import time
+import sys
+import argparse
+import os
+
+def receive_image_loop(port, baudrate, output_base):
+    try:
+        ser = serial.Serial(port, baudrate, timeout=5)
+        print(f"Opened {port} at {baudrate} baud")
+    except serial.SerialException as e:
+        print(f"Error opening serial port: {e}")
+        return
+
+    # Wait for board to boot up / stabilize
+    print("Waiting for board initialization (2s)...")
+    time.sleep(2)
+    ser.reset_input_buffer()
+
+    image_count = 1
+    base_name, ext = os.path.splitext(output_base)
+    if not ext:
+        ext = ".jpg"
+
+    print("Ready to capture.")
+    
+    try:
+        while True:
+            try:
+                input(f"\nPress Enter to capture image #{image_count} (Ctrl+C to exit)...")
+            except EOFError:
+                break
+                
+            print("Sending capture command...")
+            ser.reset_input_buffer()  # Clear any garbage before sending command
+            ser.write(b'c')
+
+            # Read size (4 bytes, Little Endian)
+            print("Waiting for image size...")
+            size_data = ser.read(4)
+            if len(size_data) != 4:
+                print(f"Error: Failed to read size (got {len(size_data)} bytes)")
+                continue
+
+            image_size = struct.unpack('<I', size_data)[0]
+            print(f"Image size: {image_size} bytes")
+
+            if not (0 < image_size < 10 * 1024 * 1024):  # Sanity check (10MB)
+                print(f"Error: Invalid image size: {image_size}")
+                continue
+
+            # Read image data using readinto for efficiency
+            print("Receiving image data...")
+            buf = bytearray(image_size)
+            view = memoryview(buf)
+            
+            # Increase timeout for large data transfer
+            old_timeout = ser.timeout
+            ser.timeout = 10
+            
+            bytes_read = 0
+            CHUNK_SIZE = 32768  # 32KB chunks
+            failed = False
+
+            while bytes_read < image_size:
+                chunk_size = min(CHUNK_SIZE, image_size - bytes_read)
+                n = ser.readinto(view[bytes_read:bytes_read + chunk_size])
+                
+                if not n:  # None or 0 means timeout
+                    print(f"\nError: Timeout receiving data at {bytes_read}/{image_size} bytes")
+                    failed = True
+                    break
+                    
+                bytes_read += n
+                sys.stdout.write(f"\rReceived: {bytes_read} / {image_size} bytes")
+                sys.stdout.flush()
+            
+            ser.timeout = old_timeout  # Restore timeout
+
+            if not failed and bytes_read == image_size:
+                print("\nTransfer complete")
+                output_filename = f"{base_name}_{image_count:03d}{ext}"
+                with open(output_filename, 'wb') as f:
+                    f.write(buf)
+                print(f"Image saved to {output_filename}")
+                image_count += 1
+            else:
+                print(f"\nTransfer failed: received {bytes_read}/{image_size} bytes")
+
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        ser.close()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Receive JPEG images from Spresense via Serial')
+    parser.add_argument('-p', '--port', required=True, help='Serial port (e.g., COM3 or /dev/ttyUSB0)')
+    parser.add_argument('-b', '--baud', type=int, default=115200, help='Baud rate (default: 115200)')
+    parser.add_argument('-o', '--output', default='image.jpg', help='Output file base name (default: image.jpg)')
+
+    args = parser.parse_args()
+
+    receive_image_loop(args.port, args.baud, args.output)

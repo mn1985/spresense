@@ -1,0 +1,3 @@
+ifneq ($(CONFIG_EXAMPLES_GPIO_CONTROL),)
+CONFIGURED_APPS += $(APPDIR)/examples/gpio_control
+endif

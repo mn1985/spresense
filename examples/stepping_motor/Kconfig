@@ -1,0 +1,24 @@
+config EXAMPLES_STEPPING_MOTOR
+	tristate "Stepping Motor Control"
+	default n
+	---help---
+		Enable the stepping_motor app for DRV8835.
+
+if EXAMPLES_STEPPING_MOTOR
+
+config EXAMPLES_STEPPING_MOTOR_PROGNAME
+	string "Program name"
+	default "stepping_motor"
+	---help---
+		This is the name of the program that will be use when the NSH ELF
+		program is installed.
+
+config EXAMPLES_STEPPING_MOTOR_PRIORITY
+	int "Task priority"
+	default 100
+
+config EXAMPLES_STEPPING_MOTOR_STACKSIZE
+	int "Stack size"
+	default 2048
+
+endif

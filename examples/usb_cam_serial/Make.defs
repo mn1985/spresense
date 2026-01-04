@@ -1,0 +1,4 @@
+
+ifneq ($(CONFIG_EXAMPLES_USB_CAM_SERIAL),)
+CONFIGURED_APPS += examples/usb_cam_serial
+endif

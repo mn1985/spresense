@@ -1,0 +1,285 @@
+/****************************************************************************
+ * examples/usb_cam_serial/usb_cam_serial_main.c
+ *
+ *   Copyright 2025 Sony Semiconductor Solutions Corporation
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ * 3. Neither the name of Sony Semiconductor Solutions Corporation nor
+ *    the names of its contributors may be used to endorse or promote
+ *    products derived from this software without specific prior written
+ *    permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+ * FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+ * COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS
+ * OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ * ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ *
+ ****************************************************************************/
+
+/****************************************************************************
+ * Included Files
+ ****************************************************************************/
+
+#include <nuttx/config.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <sys/ioctl.h>
+#include <nuttx/video/video.h>
+#include <malloc.h>
+#include <termios.h>
+
+/****************************************************************************
+ * Pre-processor Definitions
+ ****************************************************************************/
+
+#define VIDEO_DEV_PATH "/dev/video"
+#define CAPTURE_WIDTH  VIDEO_HSIZE_QUADVGA
+#define CAPTURE_HEIGHT VIDEO_VSIZE_QUADVGA
+#define STILL_BUFNUM   (1)
+#define JPEG_QUALITY   (70)
+#define FRAMEBUFFER_SIZE (512 * 1024)  /* 512KB for JPEG (Quad VGA typical) */
+
+/****************************************************************************
+ * Private Functions
+ ****************************************************************************/
+
+static int get_cam_fd(void)
+{
+  int fd;
+  int ret;
+
+  ret = video_initialize(VIDEO_DEV_PATH);
+  if (ret != 0)
+    {
+      printf("ERROR: video_initialize failed: %d\n", ret);
+      return ret;
+    }
+
+  fd = open(VIDEO_DEV_PATH, 0);
+  if (fd < 0)
+    {
+      printf("ERROR: open %s failed: %d\n", VIDEO_DEV_PATH, errno);
+      video_uninitialize(VIDEO_DEV_PATH);
+      return -errno;
+    }
+
+  return fd;
+}
+
+static void close_cam_fd(int fd)
+{
+  close(fd);
+  video_uninitialize(VIDEO_DEV_PATH);
+}
+
+static int prepare_capture(int fd)
+{
+  int ret;
+  struct v4l2_requestbuffers req;
+  struct v4l2_format fmt;
+  struct v4l2_ext_controls ctrls;
+  struct v4l2_ext_control ctrl;
+
+  /* Request buffers */
+  req.type   = V4L2_BUF_TYPE_STILL_CAPTURE;
+  req.memory = V4L2_MEMORY_USERPTR;
+  req.count  = STILL_BUFNUM;
+  req.mode   = V4L2_BUF_MODE_FIFO;
+
+  ret = ioctl(fd, VIDIOC_REQBUFS, (unsigned long)&req);
+  if (ret < 0)
+    {
+      printf("ERROR: VIDIOC_REQBUFS failed: %d\n", errno);
+      return ret;
+    }
+
+  /* Set format */
+  fmt.type                = V4L2_BUF_TYPE_STILL_CAPTURE;
+  fmt.fmt.pix.width       = CAPTURE_WIDTH;
+  fmt.fmt.pix.height      = CAPTURE_HEIGHT;
+  fmt.fmt.pix.field       = V4L2_FIELD_ANY;
+  fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_JPEG;
+
+  ret = ioctl(fd, VIDIOC_S_FMT, (unsigned long)&fmt);
+  if (ret < 0)
+    {
+      printf("ERROR: VIDIOC_S_FMT failed: %d\n", errno);
+      return ret;
+    }
+
+  /* Set JPEG quality (optional) */
+  memset(&ctrls, 0, sizeof(ctrls));
+  memset(&ctrl, 0, sizeof(ctrl));
+
+  ctrls.ctrl_class = V4L2_CTRL_CLASS_JPEG;
+  ctrls.count      = 1;
+  ctrls.controls   = &ctrl;
+
+  ctrl.id    = V4L2_CID_JPEG_COMPRESSION_QUALITY;
+  ctrl.value = JPEG_QUALITY;
+
+  ret = ioctl(fd, VIDIOC_S_EXT_CTRLS, (unsigned long)&ctrls);
+  if (ret < 0)
+    {
+      printf("Note: Failed to set JPEG quality (optional), errno: %d\n", errno);
+    }
+
+  return 0;
+}
+
+static int take_picture(int fd, uint8_t *buf, size_t buf_size, size_t *captured_size)
+{
+  int ret;
+  struct v4l2_buffer vbuf;
+
+  /* Enqueue buffer */
+  memset(&vbuf, 0, sizeof(vbuf));
+  vbuf.type = V4L2_BUF_TYPE_STILL_CAPTURE;
+  vbuf.memory = V4L2_MEMORY_USERPTR;
+  vbuf.index = 0;
+  vbuf.m.userptr = (unsigned long)buf;
+  vbuf.length = buf_size;
+
+  ret = ioctl(fd, VIDIOC_QBUF, (unsigned long)&vbuf);
+  if (ret < 0)
+    {
+      printf("ERROR: VIDIOC_QBUF failed: %d\n", errno);
+      return ret;
+    }
+
+  /* Start capture */
+  ret = ioctl(fd, VIDIOC_TAKEPICT_START, 0);
+  if (ret < 0)
+    {
+      printf("ERROR: VIDIOC_TAKEPICT_START failed: %d\n", errno);
+      return ret;
+    }
+
+  /* Dequeue buffer (wait for capture done) */
+  ret = ioctl(fd, VIDIOC_DQBUF, (unsigned long)&vbuf);
+  if (ret < 0)
+    {
+      printf("ERROR: VIDIOC_DQBUF failed: %d\n", errno);
+      ioctl(fd, VIDIOC_TAKEPICT_STOP, 0);
+      return ret;
+    }
+
+  *captured_size = vbuf.bytesused;
+
+  /* Stop capture */
+  ioctl(fd, VIDIOC_TAKEPICT_STOP, 0);
+
+  return 0;
+}
+
+static void send_image_data(uint8_t *buf, size_t size)
+{
+  /* Send size (4 bytes, Little Endian) */
+  uint32_t sz = (uint32_t)size;
+  fwrite(&sz, 1, 4, stdout);
+  fflush(stdout);
+
+  /* Send data */
+  fwrite(buf, 1, size, stdout);
+  fflush(stdout);
+}
+
+/****************************************************************************
+ * Public Functions
+ ****************************************************************************/
+
+int main(int argc, FAR char *argv[])
+{
+  int fd;
+  int ret;
+  uint8_t *framebuffer;
+  size_t fb_size = FRAMEBUFFER_SIZE;
+  size_t captured_size;
+  char cmd;
+
+  printf("USB Camera Serial Transfer Example\n");
+  printf("Waiting for command 'c' to capture...\n");
+
+  /* Allocate framebuffer */
+  framebuffer = (uint8_t *)memalign(32, fb_size);
+  if (!framebuffer)
+    {
+      printf("ERROR: Failed to allocate framebuffer\n");
+      return -1;
+    }
+
+  /* Initialize Camera */
+  fd = get_cam_fd();
+  if (fd < 0)
+    {
+      free(framebuffer);
+      return -1;
+    }
+
+  ret = prepare_capture(fd);
+  if (ret < 0)
+    {
+      close_cam_fd(fd);
+      free(framebuffer);
+      return -1;
+    }
+
+  /* Main Loop */
+  struct termios saveterm;
+  struct termios term;
+
+  /* Set raw mode */
+  tcgetattr(0, &term);
+  memcpy(&saveterm, &term, sizeof(struct termios));
+  cfmakeraw(&term);
+  tcsetattr(0, TCSANOW, &term);
+
+  while (1)
+    {
+      /* Read command from stdin */
+      cmd = getchar();
+
+      if (cmd == 'c')
+        {
+          /* Capture */
+          ret = take_picture(fd, framebuffer, fb_size, &captured_size);
+          if (ret == 0)
+            {
+              /* Send Data */
+              send_image_data(framebuffer, captured_size);
+            }
+        }
+      else if (cmd == 'q')
+        {
+          break;
+        }
+    }
+
+  /* Finalize */
+  tcsetattr(0, TCSANOW, &saveterm);
+  close_cam_fd(fd);
+  free(framebuffer);
+
+  printf("Exit.\n");
+  return 0;
+}

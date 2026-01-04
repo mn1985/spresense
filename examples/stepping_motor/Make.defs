@@ -1,0 +1,3 @@
+ifneq ($(CONFIG_EXAMPLES_STEPPING_MOTOR),)
+CONFIGURED_APPS += examples/stepping_motor
+endif

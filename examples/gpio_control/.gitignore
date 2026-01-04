@@ -1,0 +1,9 @@
+*.o
+*.a
+*.d
+.built
+.depend
+*.swp
+*.swo
+*~
+.DS_Store

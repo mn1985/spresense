@@ -1,0 +1,26 @@
+
+config EXAMPLES_GPIO_CONTROL
+	tristate "GPIO Control command"
+	default n
+	---help---
+		Enable the gpio_control app.
+		This can control any GPIO pins on Spresense board.
+
+if EXAMPLES_GPIO_CONTROL
+
+config EXAMPLES_GPIO_CONTROL_PROGNAME
+	string "Program name"
+	default "gpio_control"
+	---help---
+		This is the name of the program that will be use when the NSH ELF
+		program is installed.
+
+config EXAMPLES_GPIO_CONTROL_PRIORITY
+	int "gpio_control task priority"
+	default 100
+
+config EXAMPLES_GPIO_CONTROL_STACKSIZE
+	int "gpio_control stack size"
+	default 2048
+
+endif

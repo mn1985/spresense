@@ -1,0 +1,3 @@
+ifneq ($(CONFIG_EXAMPLES_STEPPERD),)
+CONFIGURED_APPS += examples/stepperd
+endif

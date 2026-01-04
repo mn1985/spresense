@@ -1,0 +1,24 @@
+config EXAMPLES_STEPPERD
+	tristate "Stepper Motor Daemon"
+	default n
+	---help---
+		Enable the stepperd daemon.
+
+if EXAMPLES_STEPPERD
+
+config EXAMPLES_STEPPERD_PROGNAME
+	string "Program name"
+	default "stepperd"
+	---help---
+		This is the name of the program that will be use when the NSH ELF
+		program is installed.
+
+config EXAMPLES_STEPPERD_PRIORITY
+	int "Task priority"
+	default 100
+
+config EXAMPLES_STEPPERD_STACKSIZE
+	int "Stack size"
+	default 2048
+
+endif
